@@ -60,7 +60,10 @@ def webhook():
     json_string = request.get_data().decode('utf-8')
     logging.debug(f"Received update: {json_string}")
     update = telebot.types.Update.de_json(json_string)
+    logging.debug(f"Update object: {update}")
+    logging.debug(f"Message: {update.message}")
     bot.process_new_updates([update])
+    logging.debug("process_new_updates called")
     return 'OK', 200
 
 @app.route('/')
