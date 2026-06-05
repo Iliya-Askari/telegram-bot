@@ -5,9 +5,8 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 TOKEN = '8976118793:AAFYGenztS5eeq6PVMEJcBq1Uiq8wSxCqUo'
-WEBHOOK_URL = 'https://telegram-bot-7nhc.onrender.com/' + TOKEN
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 users = []
 
@@ -60,8 +59,6 @@ def webhook():
     json_string = request.get_data().decode('utf-8')
     logging.debug(f"Received update: {json_string}")
     update = telebot.types.Update.de_json(json_string)
-    logging.debug(f"Update object: {update}")
-    logging.debug(f"Message: {update.message}")
     bot.process_new_updates([update])
     logging.debug("process_new_updates called")
     return 'OK', 200
