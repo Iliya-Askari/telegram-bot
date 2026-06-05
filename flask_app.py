@@ -1,5 +1,8 @@
 from flask import Flask, request
 import telebot
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
 
 TOKEN = '8976118793:AAFYGenztS5eeq6PVMEJcBq1Uiq8wSxCqUo'
 WEBHOOK_URL = 'https://telegram-bot-7nhc.onrender.com/' + TOKEN
@@ -11,6 +14,7 @@ users = []
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     chat_id = message.chat.id
+    logging.debug(f"Start from {chat_id}")
     if chat_id not in users:
         if len(users) < 2:
             users.append(chat_id)
@@ -54,6 +58,7 @@ def handle_messages(message):
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
     json_string = request.get_data().decode('utf-8')
+    logging.debug(f"Received update: {json_string}")
     update = telebot.types.Update.de_json(json_string)
     bot.process_new_updates([update])
     return 'OK', 200
