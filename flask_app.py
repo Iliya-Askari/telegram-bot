@@ -26,13 +26,15 @@ def get_group(chat_id):
     cid = str(chat_id)
     if cid not in data:
         data[cid] = {
-            "locks": {"links": False, "tags": False, "forwards": False, "stickers": False, "media": False, "service": False},
+            "locks": {"لینک": False, "تگ": False, "فوروارد": False, "استیکر": False, "مدیا": False, "سرویس": False},
             "welcome": {"enabled": False, "text": "خوش آمدید {name}!"},
             "bot_admins": [],
             "vip_members": [],
             "nicknames": {},
             "stats": {},
-            "flirty_mode": False
+            "flirty_mode": False,
+            "banned_users": {},
+            "muted_users": {}
         }
         save_data(data)
     return data[cid]
@@ -64,9 +66,8 @@ def is_vip(chat_id, user_id):
     group = get_group(chat_id)
     return str(user_id) in group.get('vip_members', [])
 
-def get_name(message):
-    user = message.from_user
-    group = get_group(message.chat.id)
+def get_name(chat_id, user):
+    group = get_group(chat_id)
     nicknames = group.get('nicknames', {})
     if str(user.id) in nicknames:
         return nicknames[str(user.id)]
@@ -91,15 +92,28 @@ def add_stat(chat_id, user_id, first_name):
     data[cid]['stats'][uid]['daily'][today] += 1
     save_data(data)
 
-TOKEN = '8608812191:AAH1FdweBXAMMifn1FawPiua8CKlFPm2XSQ'
+def check_action_permission(chat_id, actor_id, target_id):
+    """
+    بررسی اینکه آیا actor مجاز به انجام عملیات روی target هست
+    خروجی: (مجاز؟, پیام خطا)
+    """
+    if is_owner(chat_id, target_id):
+        return False, "👑 این کاربر مالک گپ است و نمی‌توان روی او عملیات انجام داد."
+    if not is_owner(chat_id, actor_id):
+        if is_telegram_admin(chat_id, target_id) or is_bot_admin(chat_id, target_id):
+            return False, "🛡️ این کاربر ادمین است. فقط مالک گپ می‌تواند روی ادمین‌ها عملیات انجام دهد."
+        if is_vip(chat_id, target_id):
+            return False, "⭐ این کاربر عضو ویژه است. فقط مالک گپ می‌تواند روی اعضای ویژه عملیات انجام دهد."
+    return True, ""
+
+TOKEN = '8608812191:AAH1FdweBXAMMifm1FawPiua8CKlFPm2XSQ'
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-# ─── پیام‌های احوال‌پرسی ───
-GREETINGS = ['سلام', 'درود', 'هی', 'خوبی', 'چطوری']
-GOODNIGHTS = ['شب بخیر', 'شب خوش', 'بخیر']
-GOODMORNINGS = ['صبح بخیر', 'صبح خوش', 'بامداد بخیر']
-GOODBYES = ['خداحافظ', 'بای', 'فعلا', 'خدافظ', 'داری میری']
+GREETINGS = ['سلام', 'درود', 'هی ', 'خوبی', 'چطوری']
+GOODNIGHTS = ['شب بخیر', 'شب خوش']
+GOODMORNINGS = ['صبح بخیر', 'صبح خوش']
+GOODBYES = ['خداحافظ', 'بای', 'فعلا', 'خدافظ']
 
 FLIRTY_RESPONSES = [
     "اوه عزیزم، چقدر دلم برات تنگ شده بود 😍",
@@ -112,37 +126,62 @@ def get_flirty():
     import random
     return random.choice(FLIRTY_RESPONSES)
 
-# ─── راهنما ───
 HELP_TEXT = """
-📖 راهنمای ربات:
+📖 راهنمای ربات
 
-👑 دستورات مالک گپ:
-- ادمین ربات @یوزرنیم — ادمین کردن در ربات
-- حذف ادمین @یوزرنیم — حذف ادمین ربات
-- عضو ویژه @یوزرنیم — اضافه کردن عضو ویژه
-- حذف ویژه @یوزرنیم — حذف عضو ویژه
+━━━━━━━━━━━━━━━
+👑 دستورات مالک گپ
+━━━━━━━━━━━━━━━
+(روی پیام کاربر ریپلای کن)
 
-🛡️ دستورات ادمین:
-- بن — بن کردن (روی پیام ریپلای کن)
-- آنبن [آیدی] — آزاد کردن
-- کیک — اخراج موقت
-- سکوت [دقیقه] — بی‌صدا کردن (مثال: سکوت 20)
-- آنسکوت — برداشتن سکوت
-- قفل [نوع] — قفل کردن (لینک/تگ/فوروارد/استیکر/مدیا/سرویس)
-- آنقفل [نوع] — باز کردن قفل
-- خوشامد روشن — فعال کردن خوشامد
-- خوشامد خاموش — غیرفعال کردن خوشامد
-- متن خوشامد [متن] — تنظیم متن خوشامد
-- لقب @یوزر [لقب] — تنظیم لقب
-- تنظیمات — نمایش تنظیمات گروه
-- عشوه روشن/خاموش — حالت عشوه‌وار
+- ادمین ربات ← ادمین کردن در ربات
+- حذف ادمین ← حذف ادمین ربات
+- عضو ویژه ← کاربر محافظت شده
+- حذف ویژه ← حذف عضو ویژه
 
-📊 دستورات عمومی:
-- آمار — آمار پیام‌های امروز و کل
-- راهنما — نمایش این پیام
+━━━━━━━━━━━━━━━
+🛡️ دستورات ادمین
+━━━━━━━━━━━━━━━
+(روی پیام کاربر ریپلای کن)
+
+🚫 مدیریت کاربران:
+- بن ← بن دائمی
+- حذف بن [آیدی] ← آزاد کردن
+- کیک ← اخراج موقت
+- سکوت [دقیقه] ← مثال: سکوت 20
+- حذف سکوت ← برداشتن سکوت
+
+🔒 قفل محتوا:
+- قفل لینک ← جلوگیری از لینک
+- قفل تگ ← جلوگیری از تگ
+- قفل فوروارد ← جلوگیری از فوروارد
+- قفل استیکر ← جلوگیری از استیکر
+- قفل مدیا ← جلوگیری از عکس/ویدیو
+- حذف قفل [نوع] ← مثال: حذف قفل لینک
+
+👋 خوشامدگویی:
+- خوشامد روشن ← فعال کردن
+- خوشامد خاموش ← غیرفعال کردن
+- متن خوشامد [متن] ← تنظیم متن
+  ({name} برای نام کاربر)
+
+🏷️ لقب:
+- تنظیم لقب [لقب] ← روی پیام ریپلای کن
+- نمایش لقب ← روی پیام ریپلای کن
+
+💕 حالت عشوه:
+- عشوه روشن
+- عشوه خاموش
+
+━━━━━━━━━━━━━━━
+📊 دستورات همه اعضا
+━━━━━━━━━━━━━━━
+- آمار ← پرپیام‌ترین اعضا
+- پنل ← لیست بن‌ها، سکوت‌ها و لقب‌ها
+- راهنما ← نمایش این پیام
+- تنظیمات ← وضعیت گروه (فقط ادمین)
 """
 
-# ─── هندلرهای متنی ───
 def parse_text(message):
     return (message.text or '').strip()
 
@@ -160,11 +199,58 @@ def cmd_settings(message):
     welcome = group['welcome']
     flirty = group.get('flirty_mode', False)
     text = "⚙️ تنظیمات گروه:\n\n🔒 قفل‌ها:\n"
-    names = {'links':'لینک','tags':'تگ','forwards':'فوروارد','stickers':'استیکر','media':'مدیا','service':'سرویس'}
-    for k,v in locks.items():
-        text += f"• {names.get(k,k)}: {'✅ قفل' if v else '❌ باز'}\n"
+    for k, v in locks.items():
+        text += f"• {k}: {'✅ قفل' if v else '❌ باز'}\n"
     text += f"\n👋 خوشامد: {'✅ فعال' if welcome['enabled'] else '❌ غیرفعال'}"
     text += f"\n💕 حالت عشوه: {'✅ فعال' if flirty else '❌ غیرفعال'}"
+    bot.reply_to(message, text)
+
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'پنل', content_types=['text'])
+def cmd_panel(message):
+    group = get_group(message.chat.id)
+    banned = group.get('banned_users', {})
+    muted = group.get('muted_users', {})
+    nicknames = group.get('nicknames', {})
+    vips = group.get('vip_members', [])
+    bot_admins = group.get('bot_admins', [])
+
+    text = "📋 پنل مدیریت گروه\n\n"
+
+    text += "🚫 بن‌شده‌ها:\n"
+    if banned:
+        for uid, name in banned.items():
+            text += f"• {name} (آیدی: {uid})\n"
+    else:
+        text += "• کسی بن نشده\n"
+
+    text += "\n🔇 سکوت‌شده‌ها:\n"
+    if muted:
+        for uid, info in muted.items():
+            text += f"• {info['name']} تا {info.get('until', 'نامشخص')}\n"
+    else:
+        text += "• کسی سکوت نشده\n"
+
+    text += "\n🏷️ لقب‌ها:\n"
+    if nicknames:
+        for uid, nick in nicknames.items():
+            text += f"• آیدی {uid}: {nick}\n"
+    else:
+        text += "• لقبی تنظیم نشده\n"
+
+    text += "\n⭐ اعضای ویژه:\n"
+    if vips:
+        for uid in vips:
+            text += f"• آیدی {uid}\n"
+    else:
+        text += "• عضو ویژه‌ای نیست\n"
+
+    text += "\n🛡️ ادمین‌های ربات:\n"
+    if bot_admins:
+        for uid in bot_admins:
+            text += f"• آیدی {uid}\n"
+    else:
+        text += "• ادمین ربات تعریف نشده\n"
+
     bot.reply_to(message, text)
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'آمار', content_types=['text'])
@@ -176,8 +262,8 @@ def cmd_stats(message):
         bot.reply_to(message, "هنوز آماری ثبت نشده.")
         return
     stats = data[cid]['stats']
-    today_stats = sorted([(uid, s['name'], s['daily'].get(today,0)) for uid,s in stats.items()], key=lambda x: x[2], reverse=True)
-    total_stats = sorted([(uid, s['name'], s['total']) for uid,s in stats.items()], key=lambda x: x[2], reverse=True)
+    today_stats = sorted([(uid, s['name'], s['daily'].get(today, 0)) for uid, s in stats.items()], key=lambda x: x[2], reverse=True)
+    total_stats = sorted([(uid, s['name'], s['total']) for uid, s in stats.items()], key=lambda x: x[2], reverse=True)
     text = "📊 آمار پیام‌ها:\n\n🌅 امروز:\n"
     for i, (uid, name, count) in enumerate(today_stats[:5], 1):
         if count > 0:
@@ -195,29 +281,37 @@ def cmd_ban(message):
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
-    target = message.reply_to_message.from_user.id
-    if is_vip(message.chat.id, target):
-        bot.reply_to(message, "⭐ این کاربر عضو ویژه است و نمی‌توان بنش کرد.")
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    ok, err = check_action_permission(message.chat.id, message.from_user.id, target_id)
+    if not ok:
+        bot.reply_to(message, err)
         return
     try:
-        bot.ban_chat_member(message.chat.id, target)
-        bot.reply_to(message, f"✅ کاربر {message.reply_to_message.from_user.first_name} بن شد.")
+        bot.ban_chat_member(message.chat.id, target_id)
+        data = load_data()
+        data[str(message.chat.id)]['banned_users'][str(target_id)] = target_name
+        save_data(data)
+        bot.reply_to(message, f"✅ {target_name} بن شد.")
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('آنبن'), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('حذف بن'), content_types=['text'])
 def cmd_unban(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند آنبن کنند.")
+        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند بن را حذف کنند.")
         return
     parts = parse_text(message).split()
-    if len(parts) < 2:
-        bot.reply_to(message, "مثال: آنبن 123456789")
+    if len(parts) < 3:
+        bot.reply_to(message, "مثال: حذف بن 123456789")
         return
     try:
-        uid = int(parts[1])
+        uid = int(parts[2])
         bot.unban_chat_member(message.chat.id, uid, only_if_blocked=True)
-        bot.reply_to(message, f"✅ کاربر {uid} آزاد شد.")
+        data = load_data()
+        data[str(message.chat.id)]['banned_users'].pop(str(uid), None)
+        save_data(data)
+        bot.reply_to(message, f"✅ بن کاربر {uid} حذف شد.")
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
@@ -229,14 +323,16 @@ def cmd_kick(message):
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
-    target = message.reply_to_message.from_user.id
-    if is_vip(message.chat.id, target):
-        bot.reply_to(message, "⭐ این کاربر عضو ویژه است.")
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    ok, err = check_action_permission(message.chat.id, message.from_user.id, target_id)
+    if not ok:
+        bot.reply_to(message, err)
         return
     try:
-        bot.ban_chat_member(message.chat.id, target)
-        bot.unban_chat_member(message.chat.id, target)
-        bot.reply_to(message, f"✅ کاربر {message.reply_to_message.from_user.first_name} اخراج شد.")
+        bot.ban_chat_member(message.chat.id, target_id)
+        bot.unban_chat_member(message.chat.id, target_id)
+        bot.reply_to(message, f"✅ {target_name} اخراج شد.")
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
@@ -248,40 +344,54 @@ def cmd_mute(message):
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
-    target = message.reply_to_message.from_user.id
-    if is_vip(message.chat.id, target):
-        bot.reply_to(message, "⭐ این کاربر عضو ویژه است.")
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
+    ok, err = check_action_permission(message.chat.id, message.from_user.id, target_id)
+    if not ok:
+        bot.reply_to(message, err)
         return
     parts = parse_text(message).split()
     minutes = 0
     if len(parts) > 1 and parts[1].isdigit():
         minutes = int(parts[1])
-    until = 0
+    until_dt = None
+    until_ts = 0
     if minutes > 0:
-        until = int((datetime.datetime.now() + datetime.timedelta(minutes=minutes)).timestamp())
+        until_dt = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+        until_ts = int(until_dt.timestamp())
     try:
-        bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions(can_send_messages=False), until_date=until)
-        msg = f"✅ کاربر {message.reply_to_message.from_user.first_name} سکوت شد"
+        bot.restrict_chat_member(message.chat.id, target_id, permissions=ChatPermissions(can_send_messages=False), until_date=until_ts)
+        data = load_data()
+        data[str(message.chat.id)]['muted_users'][str(target_id)] = {
+            'name': target_name,
+            'until': until_dt.strftime('%Y-%m-%d %H:%M') if until_dt else 'نامحدود'
+        }
+        save_data(data)
+        msg = f"✅ {target_name} سکوت شد"
         if minutes > 0:
             msg += f" برای {minutes} دقیقه."
         bot.reply_to(message, msg)
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'آنسکوت', content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'حذف سکوت', content_types=['text'])
 def cmd_unmute(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند آنسکوت کنند.")
+        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند سکوت را حذف کنند.")
         return
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
-    target = message.reply_to_message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+    target_name = message.reply_to_message.from_user.first_name
     try:
-        bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions(
+        bot.restrict_chat_member(message.chat.id, target_id, permissions=ChatPermissions(
             can_send_messages=True, can_send_media_messages=True,
             can_send_other_messages=True, can_add_web_page_previews=True))
-        bot.reply_to(message, f"✅ سکوت {message.reply_to_message.from_user.first_name} برداشته شد.")
+        data = load_data()
+        data[str(message.chat.id)]['muted_users'].pop(str(target_id), None)
+        save_data(data)
+        bot.reply_to(message, f"✅ سکوت {target_name} حذف شد.")
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
@@ -290,38 +400,32 @@ def cmd_lock(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند قفل کنند.")
         return
-    fa_map = {'لینک':'links','تگ':'tags','فوروارد':'forwards','استیکر':'stickers','مدیا':'media','سرویس':'service'}
+    valid = ['لینک', 'تگ', 'فوروارد', 'استیکر', 'مدیا', 'سرویس']
     parts = parse_text(message).split()
-    if len(parts) < 2:
+    if len(parts) < 2 or parts[1] not in valid:
+        bot.reply_to(message, f"انواع قفل: {' | '.join(valid)}")
         return
-    feature = fa_map.get(parts[1])
-    if not feature:
-        bot.reply_to(message, "نوع قفل نامعتبر است.\nانواع: لینک، تگ، فوروارد، استیکر، مدیا، سرویس")
-        return
+    feature = parts[1]
     data = load_data()
-    cid = str(message.chat.id)
-    data[cid]['locks'][feature] = True
+    data[str(message.chat.id)]['locks'][feature] = True
     save_data(data)
-    bot.reply_to(message, f"🔒 {parts[1]} قفل شد.")
+    bot.reply_to(message, f"🔒 {feature} قفل شد.")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('آنقفل '), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('حذف قفل '), content_types=['text'])
 def cmd_unlock(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند قفل را باز کنند.")
+        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند قفل را حذف کنند.")
         return
-    fa_map = {'لینک':'links','تگ':'tags','فوروارد':'forwards','استیکر':'stickers','مدیا':'media','سرویس':'service'}
+    valid = ['لینک', 'تگ', 'فوروارد', 'استیکر', 'مدیا', 'سرویس']
     parts = parse_text(message).split()
-    if len(parts) < 2:
+    if len(parts) < 3 or parts[2] not in valid:
+        bot.reply_to(message, f"انواع قفل: {' | '.join(valid)}")
         return
-    feature = fa_map.get(parts[1])
-    if not feature:
-        bot.reply_to(message, "نوع قفل نامعتبر است.")
-        return
+    feature = parts[2]
     data = load_data()
-    cid = str(message.chat.id)
-    data[cid]['locks'][feature] = False
+    data[str(message.chat.id)]['locks'][feature] = False
     save_data(data)
-    bot.reply_to(message, f"🔓 {parts[1]} باز شد.")
+    bot.reply_to(message, f"🔓 قفل {feature} حذف شد.")
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'خوشامد روشن', content_types=['text'])
 def cmd_welcome_on(message):
@@ -354,17 +458,16 @@ def cmd_set_welcome(message):
     save_data(data)
     bot.reply_to(message, "✅ متن خوشامد تنظیم شد.\n({name} برای نام کاربر)")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('ادمین ربات'), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'ادمین ربات', content_types=['text'])
 def cmd_add_bot_admin(message):
     if not is_owner(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط مالک گپ می‌تواند ادمین ربات تعریف کند.")
         return
-    if message.reply_to_message:
-        uid = str(message.reply_to_message.from_user.id)
-        name = message.reply_to_message.from_user.first_name
-    else:
+    if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
+    uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
     data = load_data()
     cid = str(message.chat.id)
     if uid not in data[cid]['bot_admins']:
@@ -372,17 +475,16 @@ def cmd_add_bot_admin(message):
         save_data(data)
     bot.reply_to(message, f"✅ {name} به عنوان ادمین ربات اضافه شد.")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('حذف ادمین'), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'حذف ادمین', content_types=['text'])
 def cmd_remove_bot_admin(message):
     if not is_owner(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط مالک گپ می‌تواند ادمین را حذف کند.")
         return
-    if message.reply_to_message:
-        uid = str(message.reply_to_message.from_user.id)
-        name = message.reply_to_message.from_user.first_name
-    else:
+    if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
+    uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
     data = load_data()
     cid = str(message.chat.id)
     if uid in data[cid]['bot_admins']:
@@ -390,17 +492,16 @@ def cmd_remove_bot_admin(message):
         save_data(data)
     bot.reply_to(message, f"✅ {name} از ادمین‌های ربات حذف شد.")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('عضو ویژه'), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'عضو ویژه', content_types=['text'])
 def cmd_add_vip(message):
     if not is_owner(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط مالک گپ می‌تواند عضو ویژه تعریف کند.")
         return
-    if message.reply_to_message:
-        uid = str(message.reply_to_message.from_user.id)
-        name = message.reply_to_message.from_user.first_name
-    else:
+    if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
+    uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
     data = load_data()
     cid = str(message.chat.id)
     if uid not in data[cid]['vip_members']:
@@ -408,17 +509,16 @@ def cmd_add_vip(message):
         save_data(data)
     bot.reply_to(message, f"⭐ {name} به عنوان عضو ویژه اضافه شد.")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('حذف ویژه'), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'حذف ویژه', content_types=['text'])
 def cmd_remove_vip(message):
     if not is_owner(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط مالک گپ می‌تواند عضو ویژه را حذف کند.")
         return
-    if message.reply_to_message:
-        uid = str(message.reply_to_message.from_user.id)
-        name = message.reply_to_message.from_user.first_name
-    else:
+    if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
+    uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
     data = load_data()
     cid = str(message.chat.id)
     if uid in data[cid]['vip_members']:
@@ -426,7 +526,7 @@ def cmd_remove_vip(message):
         save_data(data)
     bot.reply_to(message, f"✅ {name} از اعضای ویژه حذف شد.")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('لقب '), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('تنظیم لقب '), content_types=['text'])
 def cmd_set_nickname(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
         bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند لقب تعیین کنند.")
@@ -434,13 +534,28 @@ def cmd_set_nickname(message):
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
         return
-    nickname = parse_text(message).replace('لقب ', '', 1).strip()
+    nickname = parse_text(message).replace('تنظیم لقب ', '', 1).strip()
     uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
     data = load_data()
     cid = str(message.chat.id)
     data[cid]['nicknames'][uid] = nickname
     save_data(data)
-    bot.reply_to(message, f"✅ لقب '{nickname}' برای {message.reply_to_message.from_user.first_name} تنظیم شد.")
+    bot.reply_to(message, f"✅ لقب '{nickname}' برای {name} تنظیم شد.")
+
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'نمایش لقب', content_types=['text'])
+def cmd_show_nickname(message):
+    if not message.reply_to_message:
+        bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
+        return
+    uid = str(message.reply_to_message.from_user.id)
+    name = message.reply_to_message.from_user.first_name
+    group = get_group(message.chat.id)
+    nickname = group.get('nicknames', {}).get(uid)
+    if nickname:
+        bot.reply_to(message, f"🏷️ لقب {name}: {nickname}")
+    else:
+        bot.reply_to(message, f"{name} لقبی ندارد.")
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) in ['عشوه روشن', 'عشوه خاموش'], content_types=['text'])
 def cmd_flirty(message):
@@ -453,7 +568,6 @@ def cmd_flirty(message):
     save_data(data)
     bot.reply_to(message, "💕 حالت عشوه فعال شد!" if state else "✅ حالت عشوه غیرفعال شد.")
 
-# ─── هندلر اصلی پیام‌ها ───
 @bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'voice', 'document', 'sticker', 'animation'])
 def handle_all(message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -462,29 +576,40 @@ def handle_all(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     text = parse_text(message)
-    name = get_name(message)
     group = get_group(chat_id)
 
     # آمار
     add_stat(chat_id, user_id, message.from_user.first_name)
 
-    # فیلترها (برای غیر ادمین)
+    # فیلترها برای غیر ادمین
     if not is_bot_admin(chat_id, user_id):
         locks = group['locks']
         should_delete = False
-        if locks.get('links') and re.search(r'http[s]?://', text or message.caption or ''):
+        delete_reason = ""
+
+        if locks.get('لینک') and re.search(r'http[s]?://', text or message.caption or ''):
             should_delete = True
-        if not should_delete and locks.get('tags') and re.search(r'@\w+', text or message.caption or ''):
+            delete_reason = "🔒 ارسال لینک در این گروه قفل است."
+        elif locks.get('تگ') and re.search(r'@\w+', text or message.caption or ''):
             should_delete = True
-        if not should_delete and locks.get('forwards') and (message.forward_from or message.forward_from_chat):
+            delete_reason = "🔒 تگ کردن در این گروه قفل است."
+        elif locks.get('فوروارد') and (message.forward_from or message.forward_from_chat):
             should_delete = True
-        if not should_delete and locks.get('stickers') and message.content_type == 'sticker':
+            delete_reason = "🔒 فوروارد در این گروه قفل است."
+        elif locks.get('استیکر') and message.content_type == 'sticker':
             should_delete = True
-        if not should_delete and locks.get('media') and message.content_type in ['photo','video','voice','animation','document']:
+            delete_reason = "🔒 ارسال استیکر در این گروه قفل است."
+        elif locks.get('مدیا') and message.content_type in ['photo', 'video', 'voice', 'animation', 'document']:
             should_delete = True
+            delete_reason = "🔒 ارسال مدیا در این گروه قفل است."
+
         if should_delete:
             try:
                 bot.delete_message(chat_id, message.message_id)
+                sent = bot.send_message(chat_id, f"{message.from_user.first_name}، {delete_reason}")
+                import time
+                time.sleep(5)
+                bot.delete_message(chat_id, sent.message_id)
             except:
                 pass
             return
@@ -492,27 +617,25 @@ def handle_all(message):
     if not text:
         return
 
-    # واکنش به احوال‌پرسی
+    name = get_name(chat_id, message.from_user)
     flirty = group.get('flirty_mode', False)
 
+    # واکنش به احوال‌پرسی
     if any(g in text for g in GREETINGS):
         if flirty:
             bot.reply_to(message, get_flirty())
         else:
             bot.reply_to(message, f"سلام {name}! 👋")
-
     elif any(g in text for g in GOODMORNINGS):
         if flirty:
             bot.reply_to(message, f"صبح تو هم بخیر عزیزم {name} 🌸☀️")
         else:
             bot.reply_to(message, f"صبح بخیر {name}! ☀️")
-
     elif any(g in text for g in GOODNIGHTS):
         if flirty:
-            bot.reply_to(message, f"شب بخیر {name} عزیزم، خواب خوب ببینی 🌙💕")
+            bot.reply_to(message, f"شب بخیر {name} عزیزم 🌙💕")
         else:
             bot.reply_to(message, f"شب بخیر {name}! 🌙")
-
     elif any(g in text for g in GOODBYES):
         if flirty:
             bot.reply_to(message, f"نرو {name}، دلم برات تنگ میشه 🥺💔")
@@ -522,20 +645,22 @@ def handle_all(message):
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_members(message):
     group = get_group(message.chat.id)
-    if group['locks'].get('service'):
+    if group['locks'].get('سرویس'):
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except:
             pass
     if group['welcome']['enabled']:
         for member in message.new_chat_members:
+            if member.is_bot:
+                continue
             text = group['welcome']['text'].replace('{name}', member.first_name)
             bot.send_message(message.chat.id, text)
 
 @bot.message_handler(content_types=['left_chat_member'])
 def handle_left_member(message):
     group = get_group(message.chat.id)
-    if group['locks'].get('service'):
+    if group['locks'].get('سرویس'):
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except:
