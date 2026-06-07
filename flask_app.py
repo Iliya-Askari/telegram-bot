@@ -129,9 +129,9 @@ def get_flirty():
 HELP_TEXT = """
 📖 راهنمای ربات
 
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👑 دستورات مالک گپ
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 (روی پیام کاربر ریپلای کن)
 
 - ادمین ربات ← ادمین کردن در ربات
@@ -139,9 +139,9 @@ HELP_TEXT = """
 - عضو ویژه ← کاربر محافظت شده
 - حذف ویژه ← حذف عضو ویژه
 
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛡️ دستورات ادمین
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 (روی پیام کاربر ریپلای کن)
 
 🚫 مدیریت کاربران:
@@ -173,9 +173,9 @@ HELP_TEXT = """
 - عشوه روشن
 - عشوه خاموش
 
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 دستورات همه اعضا
-━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - آمار ← پرپیام‌ترین اعضا
 - پنل ← لیست بن‌ها، سکوت‌ها و لقب‌ها
 - راهنما ← نمایش این پیام
@@ -315,10 +315,10 @@ def cmd_unban(message):
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'کیک', content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'سیک', content_types=['text'])
 def cmd_kick(message):
     if not is_bot_admin(message.chat.id, message.from_user.id):
-        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند کیک کنند.")
+        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند سیک کنند.")
         return
     if not message.reply_to_message:
         bot.reply_to(message, "روی پیام کاربر ریپلای کن.")
@@ -332,7 +332,7 @@ def cmd_kick(message):
     try:
         bot.ban_chat_member(message.chat.id, target_id)
         bot.unban_chat_member(message.chat.id, target_id)
-        bot.reply_to(message, f"✅ {target_name} اخراج شد.")
+        bot.reply_to(message, f"✅ {target_name} سیک شد.")
     except Exception as e:
         bot.reply_to(message, f"خطا: {e}")
 
@@ -508,7 +508,46 @@ def cmd_add_vip(message):
         data[cid]['vip_members'].append(uid)
         save_data(data)
     bot.reply_to(message, f"⭐ {name} به عنوان عضو ویژه اضافه شد.")
+    
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and (parse_text(m) == 'حذف' or parse_text(m).startswith('حذف ') and parse_text(m).split()[1].isdigit()), content_types=['text'])
+def cmd_delete(message):
+    if not is_bot_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "⛔ فقط ادمین‌ها می‌توانند پیام حذف کنند.")
+        return
 
+    text = parse_text(message)
+    parts = text.split()
+
+    # حذف یک پیام با ریپلای
+    if message.reply_to_message and text == 'حذف':
+        try:
+            bot.delete_message(message.chat.id, message.reply_to_message.message_id)
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            bot.reply_to(message, f"خطا: {e}")
+        return
+
+    # حذف چند پیام آخر
+    if len(parts) == 2 and parts[1].isdigit():
+        count = min(int(parts[1]), 50)  # حداکثر 50 پیام
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+            deleted = 0
+            msg_id = message.message_id - 1
+            while deleted < count and msg_id > 0:
+                try:
+                    bot.delete_message(message.chat.id, msg_id)
+                    deleted += 1
+                except:
+                    pass
+                msg_id -= 1
+            bot.send_message(message.chat.id, f"✅ {deleted} پیام حذف شد.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا: {e}")
+        return
+
+    bot.reply_to(message, "روی پیام ریپلای کن و بنویس حذف\nیا بنویس: حذف 10")
+    
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'حذف ویژه', content_types=['text'])
 def cmd_remove_vip(message):
     if not is_owner(message.chat.id, message.from_user.id):
@@ -623,24 +662,24 @@ def handle_all(message):
     # واکنش به احوال‌پرسی
     if any(g in text for g in GREETINGS):
         if flirty:
-            bot.reply_to(message, get_flirty())
+            bot.send_message(message.chat.id, get_flirty())
         else:
-            bot.reply_to(message, f"سلام {name}! 👋")
+            bot.send_message(message.chat.id, f"سلام {name}! 👋")
     elif any(g in text for g in GOODMORNINGS):
         if flirty:
-            bot.reply_to(message, f"صبح تو هم بخیر عزیزم {name} 🌸☀️")
+            bot.send_message(message.chat.id, f"صبح تو هم بخیر عزیزم {name} 🌸☀️")
         else:
-            bot.reply_to(message, f"صبح بخیر {name}! ☀️")
+            bot.send_message(message.chat.id, f"صبح بخیر {name}! ☀️")
     elif any(g in text for g in GOODNIGHTS):
         if flirty:
-            bot.reply_to(message, f"شب بخیر {name} عزیزم 🌙💕")
+            bot.send_message(message.chat.id, f"شب بخیر {name} عزیزم 🌙💕")
         else:
-            bot.reply_to(message, f"شب بخیر {name}! 🌙")
+            bot.send_message(message.chat.id, f"شب بخیر {name}! 🌙")
     elif any(g in text for g in GOODBYES):
         if flirty:
-            bot.reply_to(message, f"نرو {name}، دلم برات تنگ میشه 🥺💔")
+            bot.send_message(message.chat.id, f"نرو {name}، دلم برات تنگ میشه 🥺💔")
         else:
-            bot.reply_to(message, f"خداحافظ {name}! 👋")
+            bot.send_message(message.chat.id, f"خداحافظ {name}! 👋")
 
 @bot.message_handler(content_types=['new_chat_members'])
 def handle_new_members(message):
