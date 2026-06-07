@@ -319,8 +319,7 @@ HELP_TEXT = """
 - حذف سکوت ← حذف سکوت کاربر با ریپلای
 - حذف پیام ← حذف پیام ریپلای شده
 - حذف [تعداد] ← حذف چند پیام آخر، مثلا: حذف 10
-- تگ ← روی پیام کاربر ریپلای کن تا فقط همان کاربر تگ شود و آیدی او نوشته شود
-
+- تگ ← همه کرابران را صدا میزند
 قفل محتوا:
 - قفل لینک
 - قفل تگ
@@ -1190,36 +1189,40 @@ def cmd_show_nickname(message):
         safe_reply(message, f"{name} لقبی ندارد.")
 
 
-
-
-
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'تگ', content_types=['text'])
-
 def cmd_tag(message):
-
     if not is_bot_admin(message.chat.id, message.from_user.id):
-
         safe_reply(message, "⛔ فقط ادمین‌ها و مالک می‌توانند از دستور تگ استفاده کنند.")
-
         return
+    try:
+        members_text = ""
+        chat_members = bot.get_chat_administrators(message.chat.id)
+        all_member_ids = set()
+        for admin in chat_members:
+            all_member_ids.add(admin.user.id)
 
-    if not message.reply_to_message or not message.reply_to_message.from_user:
+        data = load_data()
+        cid = str(message.chat.id)
+        stats = data.get(cid, {}).get('stats', {})
+        
+        tagged = []
+        for uid, info in stats.items():
+            user_id = int(uid)
+            if user_id == message.from_user.id:
+                continue
+            name = info.get('name', 'کاربر')
+            tagged.append(f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>')
 
-        safe_reply(message, "روی پیام کاربر ریپلای کن.")
+        if not tagged:
+            safe_reply(message, "کاربری برای تگ کردن پیدا نشد.")
+            return
 
-        return
+        chunks = [tagged[i:i+10] for i in range(0, len(tagged), 10)]
+        for chunk in chunks:
+            bot.send_message(message.chat.id, ' '.join(chunk), parse_mode='HTML', disable_web_page_preview=True)
 
-    user = message.reply_to_message.from_user
-
-    name = html.escape(user.first_name or 'کاربر')
-
-    text = f'<a href="tg://user?id={user.id}">{name}</a>\nID: <code>{user.id}</code>'
-
-    if getattr(user, 'username', None):
-
-        text += f"\n@{html.escape(user.username)}"
-
-    bot.send_message(message.chat.id, text, parse_mode='HTML', disable_web_page_preview=True)
+    except Exception as e:
+        safe_reply(message, f"خطا: {e}")
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) in ['عشوه روشن', 'عشوه خاموش'], content_types=['text'])
 
