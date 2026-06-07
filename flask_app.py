@@ -712,13 +712,11 @@ def cmd_mute(message):
 
         return
 
+
     parts = parse_text(message).split()
-
     minutes = 0
-
     if len(parts) > 1 and parts[1].isdigit():
-
-        minutes = int(parts[1])
+        minutes = min(int(parts[1]), 525600)
 
     until_dt = None
 
@@ -1445,13 +1443,12 @@ def handle_left_member(message):
 @app.route(f'/{TOKEN}', methods=['POST'])
 
 def webhook():
-
-    json_string = request.get_data().decode('utf-8')
-
-    update = telebot.types.Update.de_json(json_string)
-
-    bot.process_new_updates([update])
-
+    try:
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
     return 'OK', 200
 
 
