@@ -10,6 +10,8 @@ import json
 
 import os
 
+import html
+
 import re
 
 import datetime
@@ -213,6 +215,42 @@ def check_action_permission(chat_id, actor_id, target_id):
     return True, ""
 
 
+def is_user_removed(chat_id, user_id):
+    group = get_group(chat_id)
+    return str(user_id) in group.get('banned_users', {})
+
+
+def store_removed_user(chat_id, user_id, user_name):
+    data = load_data()
+    cid = str(chat_id)
+    if cid not in data:
+        get_group(chat_id)
+        data = load_data()
+    data[cid].setdefault('banned_users', {})[str(user_id)] = user_name
+    save_data(data)
+
+
+def remove_user_from_ban_list(chat_id, user_id):
+    data = load_data()
+    cid = str(chat_id)
+    if cid not in data:
+        return None
+    removed = data[cid].get('banned_users', {}).pop(str(user_id), None)
+    save_data(data)
+    return removed
+
+
+def get_group_link(chat_id):
+    try:
+        chat = bot.get_chat(chat_id)
+        username = getattr(chat, 'username', None)
+        if username:
+            return f"https://t.me/{username}"
+    except Exception:
+        pass
+    return None
+
+
 
 TOKEN = '8608812191:AAH1FdweBXAMMifn1FawPiua8CKlFPm2XSQ'
 
@@ -264,116 +302,52 @@ def get_flirty():
 
 
 HELP_TEXT = """
-
 📖 راهنمای ربات
 
+دستورات مالک گپ:
+- ادمین ربات ← اضافه کردن ادمین ربات با ریپلای
+- حذف ادمین ← حذف ادمین ربات با ریپلای
+- عضو ویژه ← اضافه کردن عضو ویژه با ریپلای
+- حذف ویژه ← حذف عضو ویژه با ریپلای
 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-👑 دستورات مالک گپ
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-(روی پیام کاربر ریپلای کن)
-
-
-
-- ادمین ربات ← ادمین کردن در ربات
-
-- حذف ادمین ← حذف ادمین ربات
-
-- عضو ویژه ← کاربر محافظت شده
-
-- حذف ویژه ← حذف عضو ویژه
-
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🛡️ دستورات ادمین
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-(روی پیام کاربر ریپلای کن)
-
-
-
-🚫 مدیریت کاربران:
-
-- بن ← بن دائمی
-
-- حذف بن [آیدی] ← آزاد کردن
-
-- کیک ← اخراج موقت
-
+دستورات ادمین:
+- بن ← بن کردن کاربر با ریپلای
+- سیک ← همان بن
+- حذف بن [آیدی] ← حذف از لیست بن
+- حذف بن ← روی پیام کاربر ریپلای کن تا از لیست بن خارج شود
 - سکوت [دقیقه] ← مثال: سکوت 20
+- حذف سکوت ← حذف سکوت کاربر با ریپلای
+- حذف پیام ← حذف پیام ریپلای شده
+- حذف [تعداد] ← حذف چند پیام آخر، مثلا: حذف 10
+- تگ ← روی پیام کاربر ریپلای کن تا فقط همان کاربر تگ شود و آیدی او نوشته شود
 
-- حذف سکوت ← برداشتن سکوت
+قفل محتوا:
+- قفل لینک
+- قفل تگ
+- قفل فوروارد
+- قفل استیکر
+- قفل مدیا
+- حذف قفل [نوع]
 
+خوشامدگویی:
+- خوشامد روشن
+- خوشامد خاموش
+- متن خوشامد [متن] ← از {name} برای نام کاربر استفاده کن
 
+لقب:
+- تنظیم لقب [لقب] ← روی پیام کاربر ریپلای کن
+- نمایش لقب ← روی پیام کاربر ریپلای کن
 
-🔒 قفل محتوا:
-
-- قفل لینک ← جلوگیری از لینک
-
-- قفل تگ ← جلوگیری از تگ
-
-- قفل فوروارد ← جلوگیری از فوروارد
-
-- قفل استیکر ← جلوگیری از استیکر
-
-- قفل مدیا ← جلوگیری از عکس/ویدیو
-
-- حذف قفل [نوع] ← مثال: حذف قفل لینک
-
-
-
-👋 خوشامدگویی:
-
-- خوشامد روشن ← فعال کردن
-
-- خوشامد خاموش ← غیرفعال کردن
-
-- متن خوشامد [متن] ← تنظیم متن
-
-  ({name} برای نام کاربر)
-
-
-
-🏷️ لقب:
-
-- تنظیم لقب [لقب] ← روی پیام ریپلای کن
-
-- نمایش لقب ← روی پیام ریپلای کن
-
-
-
-💕 حالت عشوه:
-
+حالت عشوه:
 - عشوه روشن
-
 - عشوه خاموش
 
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📊 دستورات همه اعضا
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- آمار ← پرپیام‌ترین اعضا
-
-- پنل ← لیست بن‌ها، سکوت‌ها و لقب‌ها
-
-- راهنما ← نمایش این پیام
-
-- تنظیمات ← وضعیت گروه (فقط ادمین)
-
+همه اعضا:
+- آمار
+- پنل
+- راهنما
+- تنظیمات
 """
-
-
 
 def parse_text(message):
 
@@ -577,6 +551,12 @@ def cmd_ban(message):
 
     target_name = message.reply_to_message.from_user.first_name
 
+    if is_user_removed(message.chat.id, target_id):
+
+        safe_reply(message, "کاربر حذف شده است.")
+
+        return
+
     ok, err = check_action_permission(message.chat.id, message.from_user.id, target_id)
 
     if not ok:
@@ -589,19 +569,13 @@ def cmd_ban(message):
 
         bot.ban_chat_member(message.chat.id, target_id)
 
-        data = load_data()
+        store_removed_user(message.chat.id, target_id, target_name)
 
-        data[str(message.chat.id)]['banned_users'][str(target_id)] = target_name
-
-        save_data(data)
-
-        safe_reply(message, f"✅ {target_name} بن شد.")
+        safe_reply(message, f"✅ {target_name} حذف شد.")
 
     except Exception as e:
 
         safe_reply(message, f"خطا: {e}")
-
-
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('حذف بن'), content_types=['text'])
 
@@ -613,33 +587,57 @@ def cmd_unban(message):
 
         return
 
-    parts = parse_text(message).split()
+    text = parse_text(message)
 
-    if len(parts) < 3:
+    parts = text.split()
 
-        safe_reply(message, "مثال: حذف بن 123456789")
+    uid = None
+
+    if message.reply_to_message and len(parts) == 2:
+
+        uid = message.reply_to_message.from_user.id
+
+    elif len(parts) >= 3 and parts[2].isdigit():
+
+        uid = int(parts[2])
+
+    if uid is None:
+
+        safe_reply(message, "مثال: حذف بن 123456789 یا روی پیام کاربر ریپلای کن.")
 
         return
 
     try:
 
-        uid = int(parts[2])
+        group = get_group(message.chat.id)
+
+        if str(uid) not in group.get('banned_users', {}):
+
+            safe_reply(message, "کاربر حذف شده یا در لیست بن نیست.")
+
+            return
 
         bot.unban_chat_member(message.chat.id, uid, only_if_blocked=True)
 
-        data = load_data()
+        removed_name = remove_user_from_ban_list(message.chat.id, uid)
 
-        data[str(message.chat.id)]['banned_users'].pop(str(uid), None)
+        group_link = get_group_link(message.chat.id)
 
-        save_data(data)
+        reply_text = f"✅ بن کاربر {removed_name or uid} حذف شد."
 
-        safe_reply(message, f"✅ بن کاربر {uid} حذف شد.")
+        if group_link:
+
+            reply_text += f"\n🔗 لینک گروه: {group_link}"
+
+        else:
+
+            reply_text += "\n🔗 لینک گروه: برای این گروه لینک عمومی در دسترس نیست."
+
+        safe_reply(message, reply_text)
 
     except Exception as e:
 
         safe_reply(message, f"خطا: {e}")
-
-
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'سیک', content_types=['text'])
 
@@ -661,6 +659,12 @@ def cmd_kick(message):
 
     target_name = message.reply_to_message.from_user.first_name
 
+    if is_user_removed(message.chat.id, target_id):
+
+        safe_reply(message, "کاربر حذف شده است.")
+
+        return
+
     ok, err = check_action_permission(message.chat.id, message.from_user.id, target_id)
 
     if not ok:
@@ -673,15 +677,13 @@ def cmd_kick(message):
 
         bot.ban_chat_member(message.chat.id, target_id)
 
-        bot.unban_chat_member(message.chat.id, target_id)
+        store_removed_user(message.chat.id, target_id, target_name)
 
-        safe_reply(message, f"✅ {target_name} سیک شد.")
+        safe_reply(message, f"✅ {target_name} حذف شد.")
 
     except Exception as e:
 
         safe_reply(message, f"خطا: {e}")
-
-
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m).startswith('سکوت'), content_types=['text'])
 
@@ -1029,7 +1031,7 @@ def cmd_add_vip(message):
 
     
 
-@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and (parse_text(m) == 'حذف' or parse_text(m).startswith('حذف ') and parse_text(m).split()[1].isdigit()), content_types=['text'])
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and (parse_text(m) == 'حذف' or parse_text(m) == 'حذف پیام' or (parse_text(m).startswith('حذف ') and parse_text(m).split()[-1].isdigit())), content_types=['text'])
 
 def cmd_delete(message):
 
@@ -1039,17 +1041,11 @@ def cmd_delete(message):
 
         return
 
-
-
     text = parse_text(message)
 
     parts = text.split()
 
-
-
-    # حذف یک پیام با ریپلای
-
-    if message.reply_to_message and text == 'حذف':
+    if message.reply_to_message and text in ('حذف', 'حذف پیام'):
 
         try:
 
@@ -1063,13 +1059,9 @@ def cmd_delete(message):
 
         return
 
+    if len(parts) >= 2 and parts[-1].isdigit():
 
-
-    # حذف چند پیام آخر
-
-    if len(parts) == 2 and parts[1].isdigit():
-
-        count = min(int(parts[1]), 50)  # حداکثر 50 پیام
+        count = min(int(parts[-1]), 50)
 
         try:
 
@@ -1101,11 +1093,7 @@ def cmd_delete(message):
 
         return
 
-
-
-    safe_reply(message, "روی پیام ریپلای کن و بنویس حذف\nیا بنویس: حذف 10")
-
-    
+    safe_reply(message, "روی پیام ریپلای کن و بنویس حذف پیام\nیا بنویس: حذف 10")
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'حذف ویژه', content_types=['text'])
 
@@ -1202,6 +1190,36 @@ def cmd_show_nickname(message):
         safe_reply(message, f"{name} لقبی ندارد.")
 
 
+
+
+
+@bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) == 'تگ', content_types=['text'])
+
+def cmd_tag(message):
+
+    if not is_bot_admin(message.chat.id, message.from_user.id):
+
+        safe_reply(message, "⛔ فقط ادمین‌ها و مالک می‌توانند از دستور تگ استفاده کنند.")
+
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+
+        safe_reply(message, "روی پیام کاربر ریپلای کن.")
+
+        return
+
+    user = message.reply_to_message.from_user
+
+    name = html.escape(user.first_name or 'کاربر')
+
+    text = f'<a href="tg://user?id={user.id}">{name}</a>\nID: <code>{user.id}</code>'
+
+    if getattr(user, 'username', None):
+
+        text += f"\n@{html.escape(user.username)}"
+
+    bot.send_message(message.chat.id, text, parse_mode='HTML', disable_web_page_preview=True)
 
 @bot.message_handler(func=lambda m: m.chat.type in ['group','supergroup'] and parse_text(m) in ['عشوه روشن', 'عشوه خاموش'], content_types=['text'])
 
@@ -1440,3 +1458,4 @@ def webhook():
 def index():
 
     return "bot is running!", 200
+
