@@ -106,7 +106,7 @@ def check_action_permission(chat_id, actor_id, target_id):
             return False, "⭐ این کاربر عضو ویژه است. فقط مالک گپ می‌تواند روی اعضای ویژه عملیات انجام دهد."
     return True, ""
 
-TOKEN = '8608812191:AAH1FdweBXAMMifm1FawPiua8CKlFPm2XSQ'
+TOKEN = '8608812191:AAH1FdweBXAMMifn1FawPiua8CKlFPm2XSQ'
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
