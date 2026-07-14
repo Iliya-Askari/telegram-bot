@@ -16,6 +16,8 @@ logging.basicConfig(level=logging.INFO)
 # Config  (بدون استفاده از Environment Variables)
 # =========================================================
 
+# ⚠️ توجه: چون این توکن قبلاً در یک گفتگو/چت به اشتراک گذاشته شده،
+# پیشنهاد می‌شود از BotFather یک توکن جدید بگیرید (/revoke) و این مقدار را جایگزین کنید.
 BOT_TOKEN = "8931839877:AAFauFX1kv2zlLXEhWhm_alWt04ncYdL5z0"
 CHANNEL_ID = "@NerkhBann"
 
@@ -126,11 +128,7 @@ def set_asset(asset, status):
 # Market Data (همون market.py)
 # =========================================================
 
-COINGECKO_API = (
-    "https://api.coingecko.com/api/v3/simple/price"
-    "?ids=bitcoin,ethereum"
-    "&vs_currencies=usd"
-)
+BINANCE_API = "https://api.binance.com/api/v3/ticker/price"
 
 HEADERS = {
     "User-Agent": (
@@ -174,15 +172,21 @@ def get_iran_market():
 
 
 def get_crypto():
+    """قیمت لحظه‌ای بیت‌کوین و اتریوم رو از Binance می‌گیره (بدون نیاز به API key)."""
 
-    response = requests.get(COINGECKO_API, timeout=15)
+    response = requests.get(
+        BINANCE_API,
+        params={"symbols": '["BTCUSDT","ETHUSDT"]'},
+        timeout=15,
+    )
     response.raise_for_status()
-
     data = response.json()
 
+    prices = {item["symbol"]: float(item["price"]) for item in data}
+
     return {
-        "btc": data["bitcoin"]["usd"],
-        "eth": data["ethereum"]["usd"],
+        "btc": prices["BTCUSDT"],
+        "eth": prices["ETHUSDT"],
     }
 
 
