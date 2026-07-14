@@ -520,7 +520,11 @@ def cron_trigger():
         last_sent = float(get_setting("last_sent_ts") or 0)
         now = time.time()
         
-        if (now - last_sent) >= interval_seconds:
+        # ۲۰ ثانیه ارفاق زمانی برای جبران کندیِ نت و دریافت قیمت‌ها
+        buffer_time = 20 
+        
+        # شرط با احتساب بافر چک می‌شود
+        if (now - last_sent) >= (interval_seconds - buffer_time):
             send_price_job()
             return "✅ Price fetched and sent!", 200
         else:
