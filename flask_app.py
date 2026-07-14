@@ -1,12 +1,6 @@
 from flask import Flask, request
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -320,11 +314,15 @@ def assets_menu():
 
 
 # =========================================================
-# ساخت Application و مدیریت event loop پس‌زمینه
+# ساخت Bot و مدیریت event loop پس‌زمینه
 # (چون python-telegram-bot جدید async هست ولی Flask/gunicorn sync هست)
+#
+# توجه: عمداً از Application (که JobQueue/persistence سنگین داره) استفاده
+# نشده، چون روی Python 3.14 باعث قفل شدن process_update می‌شد.
+# به‌جاش مستقیم از Bot استفاده می‌کنیم و آپدیت‌ها رو خودمون dispatch می‌کنیم.
 # =========================================================
 
-application = Application.builder().token(BOT_TOKEN).build()
+bot = Bot(token=BOT_TOKEN)
 
 bot_loop = asyncio.new_event_loop()
 
@@ -347,7 +345,7 @@ def run_async(coro, timeout=30):
 # Handlers (همون handlers.py)
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update):
 
     text = f"""
 👋 سلام
@@ -364,7 +362,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=main_menu())
 
 
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback(update: Update):
 
     query = update.callback_query
     await query.answer()
@@ -448,12 +446,16 @@ Developed with ❤️ by Eleya
         return
 
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(callback))
+async def dispatch_update(update: Update):
+    """آپدیت دریافتی از وبهوک رو دستی به هندلر درست می‌فرسته."""
+    if update.message is not None and update.message.text:
+        if update.message.text.strip() == "/start":
+            await start(update)
+        return
 
-# مقداردهی اولیه‌ی Application روی event loop خودش
-run_async(application.initialize())
-run_async(application.start())
+    if update.callback_query is not None:
+        await callback(update)
+        return
 
 
 # =========================================================
@@ -461,7 +463,7 @@ run_async(application.start())
 # =========================================================
 
 async def send_price_to_channel_async(text):
-    await application.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
+    await bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
 
 
 # =========================================================
@@ -531,8 +533,8 @@ def webhook():
         data = request.get_json(force=True)
         print(f"📩 Update دریافت شد: {str(data)[:200]}", flush=True)
 
-        update = Update.de_json(data, application.bot)
-        run_async(application.process_update(update))
+        update = Update.de_json(data, bot)
+        run_async(dispatch_update(update))
 
     except Exception as e:
         print(f"❌ Webhook error: {e}", flush=True)
@@ -547,7 +549,7 @@ def index():
 
 
 # ست کردن وبهوک هنگام بالا آمدن اپ
-run_async(application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"))
+run_async(bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"))
 print(f"✅ Webhook set to {WEBHOOK_URL}/{BOT_TOKEN}", flush=True)
 
 
