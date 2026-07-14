@@ -521,7 +521,7 @@ def cron_trigger():
         now = time.time()
         
         # ۲۰ ثانیه ارفاق زمانی برای جبران کندیِ نت و دریافت قیمت‌ها
-        buffer_time = 20 
+        buffer_time = 40 
         
         # شرط با احتساب بافر چک می‌شود
         if (now - last_sent) >= (interval_seconds - buffer_time):
