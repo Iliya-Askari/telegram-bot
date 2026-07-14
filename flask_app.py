@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 import logging
 import datetime
+import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,6 +30,10 @@ BOT_VERSION = "1.0.0"
 DEFAULT_INTERVAL = 30
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# حداقل فاصله بین دو استفاده‌ی متوالی از /send-now (ثانیه)
+SEND_NOW_COOLDOWN = 60
+last_send_now_ts = 0
 
 
 def tg_call(method, payload=None):
@@ -78,6 +83,9 @@ def initialize_settings():
         "gold": "1",
         "silver": "1",
         "last_update": "-",
+        # کش آخرین قیمت موفق کریپتو - برای وقتی همه‌ی منابع آنلاین fail کنن
+        "btc_usd_cache": "",
+        "eth_usd_cache": "",
     }
 
     for key, value in defaults.items():
@@ -128,7 +136,11 @@ def set_asset(asset, status):
 # Market Data (همون market.py)
 # =========================================================
 
-BINANCE_API = "https://api.binance.com/api/v3/ticker/price"
+COINGECKO_API = (
+    "https://api.coingecko.com/api/v3/simple/price"
+    "?ids=bitcoin,ethereum"
+    "&vs_currencies=usd"
+)
 
 HEADERS = {
     "User-Agent": (
@@ -171,23 +183,118 @@ def get_iran_market():
     }
 
 
-def get_crypto():
-    """قیمت لحظه‌ای بیت‌کوین و اتریوم رو از Binance می‌گیره (بدون نیاز به API key)."""
+def _get_crypto_from_coingecko():
+    response = requests.get(COINGECKO_API, timeout=15, headers=HEADERS)
 
-    response = requests.get(
-        BINANCE_API,
-        params={"symbols": '["BTCUSDT","ETHUSDT"]'},
-        timeout=15,
-    )
+    if response.status_code == 429:
+        raise Exception("CoinGecko rate limit (429)")
+
     response.raise_for_status()
     data = response.json()
 
-    prices = {item["symbol"]: float(item["price"]) for item in data}
-
     return {
-        "btc": prices["BTCUSDT"],
-        "eth": prices["ETHUSDT"],
+        "btc": data["bitcoin"]["usd"],
+        "eth": data["ethereum"]["usd"],
     }
+
+
+def _get_crypto_from_kraken():
+    # Kraken: هر جفت‌ارز باید جدا خونده بشه
+    r_btc = requests.get(
+        "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+        timeout=15, headers=HEADERS
+    )
+    r_btc.raise_for_status()
+    d_btc = r_btc.json()
+    if d_btc.get("error"):
+        raise Exception(f"Kraken error: {d_btc['error']}")
+    btc_price = float(list(d_btc["result"].values())[0]["c"][0])
+
+    r_eth = requests.get(
+        "https://api.kraken.com/0/public/Ticker?pair=ETHUSD",
+        timeout=15, headers=HEADERS
+    )
+    r_eth.raise_for_status()
+    d_eth = r_eth.json()
+    if d_eth.get("error"):
+        raise Exception(f"Kraken error: {d_eth['error']}")
+    eth_price = float(list(d_eth["result"].values())[0]["c"][0])
+
+    return {"btc": btc_price, "eth": eth_price}
+
+
+def _get_crypto_from_coinbase():
+    r_btc = requests.get(
+        "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+        timeout=15, headers=HEADERS
+    )
+    r_btc.raise_for_status()
+    btc_price = float(r_btc.json()["data"]["amount"])
+
+    r_eth = requests.get(
+        "https://api.coinbase.com/v2/prices/ETH-USD/spot",
+        timeout=15, headers=HEADERS
+    )
+    r_eth.raise_for_status()
+    eth_price = float(r_eth.json()["data"]["amount"])
+
+    return {"btc": btc_price, "eth": eth_price}
+
+
+# ترتیب اولویت منابع قیمت کریپتو.
+# توجه: Binance عمداً اینجا نیست چون از روی سرورهای آمریکایی (مثل Render)
+# با خطای 451 (Unavailable For Legal Reasons) مسدود می‌شه.
+CRYPTO_SOURCES = [
+    ("CoinGecko", _get_crypto_from_coingecko),
+    ("Kraken", _get_crypto_from_kraken),
+    ("Coinbase", _get_crypto_from_coinbase),
+]
+
+
+def get_crypto():
+    """
+    قیمت کریپتو رو به‌ترتیب از چند منبع مختلف می‌گیره تا وابسته به
+    محدودیت/قطعی یک سرویس خاص نباشیم. اگه همه‌ی منابع fail کردن،
+    از آخرین قیمت موفق کش‌شده در دیتابیس استفاده می‌کنه.
+    """
+    last_error = None
+
+    for source_name, source_func in CRYPTO_SOURCES:
+        for attempt in range(2):
+            try:
+                result = source_func()
+
+                # کش کردن آخرین قیمت موفق برای استفاده در صورت بروز خطا در آینده
+                set_setting("btc_usd_cache", result["btc"])
+                set_setting("eth_usd_cache", result["eth"])
+
+                if source_name != "CoinGecko":
+                    print(f"ℹ️ قیمت کریپتو از {source_name} دریافت شد", flush=True)
+
+                return result
+
+            except Exception as e:
+                last_error = e
+                print(
+                    f"❌ {source_name} تلاش {attempt + 1}/2 ناموفق: {e}",
+                    flush=True
+                )
+                time.sleep(2)
+
+    # همه‌ی منابع ناموفق بودن -> بازگشت به کش
+    cached_btc = get_setting("btc_usd_cache")
+    cached_eth = get_setting("eth_usd_cache")
+
+    if cached_btc and cached_eth:
+        print(
+            "⚠️ استفاده از قیمت کش‌شده‌ی کریپتو به‌خاطر خطای همه‌ی منابع",
+            flush=True
+        )
+        return {"btc": float(cached_btc), "eth": float(cached_eth)}
+
+    raise Exception(
+        f"دریافت قیمت کریپتو از هیچ منبعی ممکن نشد و کش هم موجود نیست: {last_error}"
+    )
 
 
 def get_market_data():
@@ -548,7 +655,25 @@ def index():
 
 @app.route(f"/{BOT_TOKEN}/send-now")
 def send_now():
-    """برای تست دستی: بدون منتظر موندن، همین الان قیمت رو به کانال بفرست."""
+    """
+    برای تست دستی: قیمت رو همین الان به کانال بفرست.
+    برای جلوگیری از rate limit شدن API‌های قیمت به‌خاطر کلیک‌های پشت‌سرهم،
+    یک فاصله‌ی حداقلی (SEND_NOW_COOLDOWN ثانیه) بین دو استفاده اعمال شده.
+    """
+    global last_send_now_ts
+
+    now = time.time()
+    remaining = SEND_NOW_COOLDOWN - (now - last_send_now_ts)
+
+    if remaining > 0:
+        return (
+            f"⏳ لطفاً {int(remaining)} ثانیه دیگر صبر کنید "
+            f"(برای جلوگیری از rate limit).",
+            429,
+        )
+
+    last_send_now_ts = now
+
     try:
         send_price_job()
         return "✅ send_price_job اجرا شد، لاگ‌ها رو در Render چک کن.", 200
