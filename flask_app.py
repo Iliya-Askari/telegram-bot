@@ -1,7 +1,12 @@
 from flask import Flask, request
 
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -9,56 +14,34 @@ import sqlite3
 import requests
 from bs4 import BeautifulSoup
 
+import asyncio
+import threading
 import logging
-import os
 import datetime
 
 logging.basicConfig(level=logging.INFO)
 
 
 # =========================================================
-# Config
+# Config  (بدون استفاده از Environment Variables)
 # =========================================================
 
 BOT_TOKEN = "8931839877:AAFauFX1kv2zlLXEhWhm_alWt04ncYdL5z0"
 CHANNEL_ID = "@NerkhBann"
 
-# آدرس عمومی سروری که ربات روش دیپلوی میشه، مثلا:
-# https://your-app-name.onrender.com
+# آدرس عمومی سرویس روی Render
 WEBHOOK_URL = "https://telegram-bot-7nhc.onrender.com"
-
-PORT = int(os.getenv("PORT", 5000))
 
 BOT_NAME = "نرخ‌بان"
 BOT_VERSION = "1.0.0"
 DEFAULT_INTERVAL = 30
 
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN تنظیم نشده. آن را در Environment Variables سرور قرار دهید."
-    )
-
-bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
-app = Flask(__name__)
-
-
-def safe_reply(message, text, **kwargs):
-    try:
-        return bot.reply_to(message, text, allow_sending_without_reply=True, **kwargs)
-    except telebot.apihelper.ApiTelegramException as e:
-        error_str = str(e).lower()
-        if "message to be replied not found" in error_str or "reply" in error_str:
-            return bot.send_message(message.chat.id, text, **kwargs)
-        raise e
-
 
 # =========================================================
-# Database
+# Database  (همون database.py)
 # =========================================================
 
-DB_FILE = "nerkhban.db"
-
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+conn = sqlite3.connect("nerkhban.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -126,26 +109,29 @@ def set_asset(asset, status):
 
 
 # =========================================================
-# Market Data (TGJU + CoinGecko)
+# Market Data (همون market.py)
 # =========================================================
+
+COINGECKO_API = (
+    "https://api.coingecko.com/api/v3/simple/price"
+    "?ids=bitcoin,ethereum"
+    "&vs_currencies=usd"
+)
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 Chrome/138.0 Safari/537.36"
+        "AppleWebKit/537.36 "
+        "Chrome/138.0 Safari/537.36"
     )
 }
 
 session = requests.Session()
 session.headers.update(HEADERS)
 
-COINGECKO_API = (
-    "https://api.coingecko.com/api/v3/simple/price"
-    "?ids=bitcoin,ethereum&vs_currencies=usd"
-)
-
 
 def get_tgju_price(url):
+
     response = session.get(url, timeout=(5, 30))
     response.raise_for_status()
 
@@ -164,6 +150,7 @@ def get_tgju_price(url):
 
 
 def get_iran_market():
+
     return {
         "usd": get_tgju_price("https://www.tgju.org/profile/price_dollar_rl"),
         "gold18": get_tgju_price("https://www.tgju.org/profile/geram18"),
@@ -173,8 +160,10 @@ def get_iran_market():
 
 
 def get_crypto():
+
     response = requests.get(COINGECKO_API, timeout=15)
     response.raise_for_status()
+
     data = response.json()
 
     return {
@@ -184,6 +173,7 @@ def get_crypto():
 
 
 def get_market_data():
+
     iran = get_iran_market()
     crypto = get_crypto()
     usd = iran["usd"]
@@ -201,10 +191,11 @@ def get_market_data():
 
 
 # =========================================================
-# Formatter
+# Formatter (همون formatter.py)
 # =========================================================
 
 def format_message(data):
+
     assets = get_enabled_assets()
 
     text = "📊 <b>نرخ‌بان</b>\n\n"
@@ -244,113 +235,265 @@ def format_message(data):
         )
 
     text += "@NerkhBann"
+
     return text
 
 
 # =========================================================
-# Telegram Sender (send to channel)
+# Keyboards (همون keyboards.py)
 # =========================================================
-
-def send_price_to_channel(text):
-    bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
-
-
-# =========================================================
-# Keyboards
-# =========================================================
-
-ASSET_NAMES = {
-    "btc": "بیت‌کوین",
-    "eth": "اتریوم",
-    "usdt": "تتر",
-    "gold": "طلا",
-    "silver": "نقره",
-}
-
 
 def main_menu():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"))
-    keyboard.add(InlineKeyboardButton("📊 وضعیت", callback_data="status"))
-    keyboard.add(InlineKeyboardButton("ℹ️ درباره ربات", callback_data="about"))
-    return keyboard
+    keyboard = [
+        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings")],
+        [InlineKeyboardButton("📊 وضعیت", callback_data="status")],
+        [InlineKeyboardButton("ℹ️ درباره ربات", callback_data="about")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 def settings_menu():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton(
+    keyboard = [
+        [InlineKeyboardButton(
             f"⏰ فاصله ارسال ({get_interval()} دقیقه)",
             callback_data="interval_menu"
-        )
-    )
-    keyboard.add(InlineKeyboardButton("💰 دارایی‌های فعال", callback_data="assets_menu"))
-    keyboard.add(InlineKeyboardButton("⬅️ بازگشت", callback_data="back_home"))
-    return keyboard
+        )],
+        [InlineKeyboardButton(
+            "💰 دارایی‌های فعال",
+            callback_data="assets_menu"
+        )],
+        [InlineKeyboardButton(
+            "⬅️ بازگشت",
+            callback_data="back_home"
+        )]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 def interval_menu():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("1", callback_data="interval_1"),
-        InlineKeyboardButton("5", callback_data="interval_5"),
-        InlineKeyboardButton("10", callback_data="interval_10"),
-    )
-    keyboard.row(
-        InlineKeyboardButton("15", callback_data="interval_15"),
-        InlineKeyboardButton("30", callback_data="interval_30"),
-        InlineKeyboardButton("60", callback_data="interval_60"),
-    )
-    keyboard.add(InlineKeyboardButton("⬅️ بازگشت", callback_data="settings"))
-    return keyboard
+    keyboard = [
+        [
+            InlineKeyboardButton("1", callback_data="interval_1"),
+            InlineKeyboardButton("5", callback_data="interval_5"),
+            InlineKeyboardButton("10", callback_data="interval_10")
+        ],
+        [
+            InlineKeyboardButton("15", callback_data="interval_15"),
+            InlineKeyboardButton("30", callback_data="interval_30"),
+            InlineKeyboardButton("60", callback_data="interval_60")
+        ],
+        [
+            InlineKeyboardButton("⬅️ بازگشت", callback_data="settings")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 def assets_menu():
+
     assets = get_enabled_assets()
-    keyboard = InlineKeyboardMarkup()
+
+    keyboard = []
+
+    names = {
+        "btc": "بیت‌کوین",
+        "eth": "اتریوم",
+        "usdt": "تتر",
+        "gold": "طلا",
+        "silver": "نقره"
+    }
 
     for key, value in assets.items():
         icon = "✅" if value else "❌"
-        keyboard.add(
+        keyboard.append([
             InlineKeyboardButton(
-                f"{icon} {ASSET_NAMES[key]}",
+                f"{icon} {names[key]}",
                 callback_data=f"asset_{key}"
             )
-        )
+        ])
 
-    keyboard.add(InlineKeyboardButton("⬅️ بازگشت", callback_data="settings"))
-    return keyboard
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ بازگشت", callback_data="settings")]
+    )
+
+    return InlineKeyboardMarkup(keyboard)
 
 
 # =========================================================
-# Scheduler (ارسال خودکار قیمت به کانال)
+# ساخت Application و مدیریت event loop پس‌زمینه
+# (چون python-telegram-bot جدید async هست ولی Flask/gunicorn sync هست)
+# =========================================================
+
+application = Application.builder().token(BOT_TOKEN).build()
+
+bot_loop = asyncio.new_event_loop()
+
+
+def _start_loop():
+    asyncio.set_event_loop(bot_loop)
+    bot_loop.run_forever()
+
+
+threading.Thread(target=_start_loop, daemon=True).start()
+
+
+def run_async(coro, timeout=30):
+    """اجرای یک تابع async روی event loop ربات، از داخل کد sync"""
+    future = asyncio.run_coroutine_threadsafe(coro, bot_loop)
+    return future.result(timeout=timeout)
+
+
+# =========================================================
+# Handlers (همون handlers.py)
+# =========================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = f"""
+👋 سلام
+
+به ربات نرخ‌بان خوش آمدید.
+
+🤖 این ربات قیمت بازار را به صورت خودکار در کانال شما منتشر می‌کند.
+
+🔒 این ربات فقط تنظیمات مربوط به خودش را ذخیره می‌کند و به اطلاعات شخصی شما دسترسی ندارد.
+
+از منوی زیر استفاده کنید.
+"""
+
+    await update.message.reply_text(text, reply_markup=main_menu())
+
+
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    # ---------------- Home ----------------
+    if data == "back_home":
+        await query.edit_message_text(text="🏠 منوی اصلی", reply_markup=main_menu())
+        return
+
+    # ---------------- Settings ----------------
+    if data == "settings":
+        await query.edit_message_text(text="⚙️ تنظیمات", reply_markup=settings_menu())
+        return
+
+    # ---------------- Interval Menu ----------------
+    if data == "interval_menu":
+        await query.edit_message_text(
+            text="⏰ فاصله ارسال را انتخاب کنید.",
+            reply_markup=interval_menu()
+        )
+        return
+
+    # ---------------- Assets Menu ----------------
+    if data == "assets_menu":
+        await query.edit_message_text(text="💰 دارایی‌های فعال", reply_markup=assets_menu())
+        return
+
+    # ---------------- Interval ----------------
+    if data.startswith("interval_"):
+        minute = data.split("_")[1]
+        set_setting("interval", minute)
+        update_scheduler_interval(int(minute))
+
+        await query.edit_message_text(
+            text=f"✅ فاصله ارسال روی {minute} دقیقه تنظیم شد.",
+            reply_markup=settings_menu()
+        )
+        return
+
+    # ---------------- Asset ----------------
+    if data.startswith("asset_"):
+        asset = data.split("_")[1]
+        assets = get_enabled_assets()
+        status = not assets[asset]
+        set_asset(asset, status)
+
+        await query.edit_message_reply_markup(reply_markup=assets_menu())
+        return
+
+    # ---------------- Status ----------------
+    if data == "status":
+        text = f"""
+📊 وضعیت ربات
+
+✅ فعال
+
+⏰ فاصله ارسال:
+{get_interval()} دقیقه
+
+📌 نسخه:
+1.0
+"""
+        await query.edit_message_text(text=text, reply_markup=main_menu())
+        return
+
+    # ---------------- About ----------------
+    if data == "about":
+        await query.edit_message_text(
+            text="""
+🤖 نرخ‌بان
+
+نسخه 1.0
+
+ربات انتشار خودکار قیمت بازار
+
+Developed with ❤️ by Eleya
+""",
+            reply_markup=main_menu()
+        )
+        return
+
+
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(callback))
+
+# مقداردهی اولیه‌ی Application روی event loop خودش
+run_async(application.initialize())
+run_async(application.start())
+
+
+# =========================================================
+# ارسال پیام به کانال (async)
+# =========================================================
+
+async def send_price_to_channel_async(text):
+    await application.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
+
+
+# =========================================================
+# Scheduler (همون scheduler.py)
 # =========================================================
 
 scheduler = BackgroundScheduler()
 
 
 def send_price_job():
-    print("⏰ شروع دریافت قیمت...")
+
+    print("⏰ شروع دریافت قیمت...", flush=True)
 
     try:
         data = get_market_data()
-        print("📊 قیمت دریافت شد")
+        print("📊 قیمت دریافت شد", flush=True)
 
         text = format_message(data)
-        print(text)
+        print(text, flush=True)
 
-        send_price_to_channel(text)
+        run_async(send_price_to_channel_async(text))
 
         set_setting(
             "last_update",
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         )
 
-        print("✅ پیام ارسال شد")
+        print("✅ پیام ارسال شد", flush=True)
 
     except Exception as e:
-        print("❌ Scheduler Error:")
-        print(e)
+        print("❌ Scheduler Error:", flush=True)
+        print(e, flush=True)
 
 
 def start_scheduler():
@@ -362,133 +505,39 @@ def start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    print("✅ Scheduler Started")
+    print("✅ Scheduler Started", flush=True)
 
 
 def update_scheduler_interval(minutes):
     try:
-        scheduler.reschedule_job(
-            "price_sender",
-            trigger="interval",
-            minutes=minutes,
-        )
+        scheduler.reschedule_job("price_sender", trigger="interval", minutes=minutes)
     except Exception as e:
-        print(f"❌ Reschedule Error: {e}")
+        print(f"❌ Reschedule Error: {e}", flush=True)
+
+
+start_scheduler()
 
 
 # =========================================================
-# Handlers
+# Flask App + Webhook (همون main.py ولی به‌جای polling، webhook)
 # =========================================================
 
-@bot.message_handler(commands=["start"])
-def cmd_start(message):
-    text = (
-        "👋 سلام\n\n"
-        "به ربات نرخ‌بان خوش آمدید.\n\n"
-        "🤖 این ربات قیمت بازار را به صورت خودکار در کانال شما منتشر می‌کند.\n\n"
-        "🔒 این ربات فقط تنظیمات مربوط به خودش را ذخیره می‌کند "
-        "و به اطلاعات شخصی شما دسترسی ندارد.\n\n"
-        "از منوی زیر استفاده کنید."
-    )
-    safe_reply(message, text, reply_markup=main_menu())
+app = Flask(__name__)
 
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback(call):
-    data = call.data
-    chat_id = call.message.chat.id
-    message_id = call.message.message_id
-
-    bot.answer_callback_query(call.id)
-
-    # ---------------- Home ----------------
-    if data == "back_home":
-        bot.edit_message_text(
-            "🏠 منوی اصلی", chat_id, message_id, reply_markup=main_menu()
-        )
-        return
-
-    # ---------------- Settings ----------------
-    if data == "settings":
-        bot.edit_message_text(
-            "⚙️ تنظیمات", chat_id, message_id, reply_markup=settings_menu()
-        )
-        return
-
-    # ---------------- Interval Menu ----------------
-    if data == "interval_menu":
-        bot.edit_message_text(
-            "⏰ فاصله ارسال را انتخاب کنید.",
-            chat_id, message_id, reply_markup=interval_menu()
-        )
-        return
-
-    # ---------------- Assets Menu ----------------
-    if data == "assets_menu":
-        bot.edit_message_text(
-            "💰 دارایی‌های فعال", chat_id, message_id, reply_markup=assets_menu()
-        )
-        return
-
-    # ---------------- Interval ----------------
-    if data.startswith("interval_"):
-        minute = int(data.split("_")[1])
-        set_setting("interval", minute)
-        update_scheduler_interval(minute)
-
-        bot.edit_message_text(
-            f"✅ فاصله ارسال روی {minute} دقیقه تنظیم شد.",
-            chat_id, message_id, reply_markup=settings_menu()
-        )
-        return
-
-    # ---------------- Asset toggle ----------------
-    if data.startswith("asset_"):
-        asset = data.split("_")[1]
-        assets = get_enabled_assets()
-        status = not assets[asset]
-        set_asset(asset, status)
-
-        bot.edit_message_reply_markup(
-            chat_id, message_id, reply_markup=assets_menu()
-        )
-        return
-
-    # ---------------- Status ----------------
-    if data == "status":
-        text = (
-            "📊 وضعیت ربات\n\n"
-            "✅ فعال\n\n"
-            f"⏰ فاصله ارسال:\n{get_interval()} دقیقه\n\n"
-            f"📌 نسخه:\n{BOT_VERSION}"
-        )
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=main_menu())
-        return
-
-    # ---------------- About ----------------
-    if data == "about":
-        text = (
-            f"🤖 {BOT_NAME}\n\n"
-            f"نسخه {BOT_VERSION}\n\n"
-            "ربات انتشار خودکار قیمت بازار\n\n"
-            "Developed with ❤️ by Eleya"
-        )
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=main_menu())
-        return
-
-
-# =========================================================
-# Flask / Webhook
-# =========================================================
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        json_string = request.get_data().decode("utf-8")
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
+        data = request.get_json(force=True)
+        print(f"📩 Update دریافت شد: {str(data)[:200]}", flush=True)
+
+        update = Update.de_json(data, application.bot)
+        run_async(application.process_update(update))
+
     except Exception as e:
-        logging.error(f"Webhook error: {e}")
+        print(f"❌ Webhook error: {e}", flush=True)
+        logging.exception("Webhook error")
+
     return "OK", 200
 
 
@@ -497,18 +546,10 @@ def index():
     return "NerkhBan bot is running!", 200
 
 
-# =========================================================
-# Startup
-# =========================================================
+# ست کردن وبهوک هنگام بالا آمدن اپ
+run_async(application.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"))
+print(f"✅ Webhook set to {WEBHOOK_URL}/{BOT_TOKEN}", flush=True)
 
-start_scheduler()
-
-if WEBHOOK_URL:
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-    print(f"✅ Webhook set to {WEBHOOK_URL}/{BOT_TOKEN}")
-else:
-    print("⚠️ WEBHOOK_URL تنظیم نشده — بعد از دیپلوی حتما ست کن.")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=10000)
