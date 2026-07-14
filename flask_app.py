@@ -1,15 +1,11 @@
 from flask import Flask, request
 
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
-
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import sqlite3
 import requests
 from bs4 import BeautifulSoup
 
-import asyncio
-import threading
 import logging
 import datetime
 
@@ -29,6 +25,30 @@ WEBHOOK_URL = "https://telegram-bot-7nhc.onrender.com"
 BOT_NAME = "نرخ‌بان"
 BOT_VERSION = "1.0.0"
 DEFAULT_INTERVAL = 30
+
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+
+def tg_call(method, payload=None):
+    """
+    یک تماس ساده و sync با API تلگرام.
+    به‌جای کتابخونه‌ی async از درخواست HTTP مستقیم استفاده می‌کنیم
+    تا هیچ وابستگی‌ای به asyncio/event loop نداشته باشیم
+    (که با gunicorn - که sync هست - همیشه مشکل‌ساز می‌شد).
+    """
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API}/{method}",
+            json=payload or {},
+            timeout=15
+        )
+        result = response.json()
+        if not result.get("ok"):
+            print(f"❌ Telegram API error ({method}): {result}", flush=True)
+        return result
+    except Exception as e:
+        print(f"❌ tg_call error ({method}): {e}", flush=True)
+        return None
 
 
 # =========================================================
@@ -234,161 +254,138 @@ def format_message(data):
 
 
 # =========================================================
-# Keyboards (همون keyboards.py)
+# Keyboards (همون keyboards.py، به فرمت خام JSON تلگرام)
 # =========================================================
 
 def main_menu():
-    keyboard = [
-        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings")],
-        [InlineKeyboardButton("📊 وضعیت", callback_data="status")],
-        [InlineKeyboardButton("ℹ️ درباره ربات", callback_data="about")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return {
+        "inline_keyboard": [
+            [{"text": "⚙️ تنظیمات", "callback_data": "settings"}],
+            [{"text": "📊 وضعیت", "callback_data": "status"}],
+            [{"text": "ℹ️ درباره ربات", "callback_data": "about"}],
+        ]
+    }
 
 
 def settings_menu():
-    keyboard = [
-        [InlineKeyboardButton(
-            f"⏰ فاصله ارسال ({get_interval()} دقیقه)",
-            callback_data="interval_menu"
-        )],
-        [InlineKeyboardButton(
-            "💰 دارایی‌های فعال",
-            callback_data="assets_menu"
-        )],
-        [InlineKeyboardButton(
-            "⬅️ بازگشت",
-            callback_data="back_home"
-        )]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    return {
+        "inline_keyboard": [
+            [{
+                "text": f"⏰ فاصله ارسال ({get_interval()} دقیقه)",
+                "callback_data": "interval_menu"
+            }],
+            [{"text": "💰 دارایی‌های فعال", "callback_data": "assets_menu"}],
+            [{"text": "⬅️ بازگشت", "callback_data": "back_home"}],
+        ]
+    }
 
 
 def interval_menu():
-    keyboard = [
-        [
-            InlineKeyboardButton("1", callback_data="interval_1"),
-            InlineKeyboardButton("5", callback_data="interval_5"),
-            InlineKeyboardButton("10", callback_data="interval_10")
-        ],
-        [
-            InlineKeyboardButton("15", callback_data="interval_15"),
-            InlineKeyboardButton("30", callback_data="interval_30"),
-            InlineKeyboardButton("60", callback_data="interval_60")
-        ],
-        [
-            InlineKeyboardButton("⬅️ بازگشت", callback_data="settings")
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "1", "callback_data": "interval_1"},
+                {"text": "5", "callback_data": "interval_5"},
+                {"text": "10", "callback_data": "interval_10"},
+            ],
+            [
+                {"text": "15", "callback_data": "interval_15"},
+                {"text": "30", "callback_data": "interval_30"},
+                {"text": "60", "callback_data": "interval_60"},
+            ],
+            [{"text": "⬅️ بازگشت", "callback_data": "settings"}],
         ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    }
 
 
 def assets_menu():
 
     assets = get_enabled_assets()
 
-    keyboard = []
-
     names = {
         "btc": "بیت‌کوین",
         "eth": "اتریوم",
         "usdt": "تتر",
         "gold": "طلا",
-        "silver": "نقره"
+        "silver": "نقره",
     }
+
+    rows = []
 
     for key, value in assets.items():
         icon = "✅" if value else "❌"
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{icon} {names[key]}",
-                callback_data=f"asset_{key}"
-            )
-        ])
+        rows.append([{
+            "text": f"{icon} {names[key]}",
+            "callback_data": f"asset_{key}"
+        }])
 
-    keyboard.append(
-        [InlineKeyboardButton("⬅️ بازگشت", callback_data="settings")]
+    rows.append([{"text": "⬅️ بازگشت", "callback_data": "settings"}])
+
+    return {"inline_keyboard": rows}
+
+
+# =========================================================
+# Handlers (همون handlers.py، ولی با فراخوانی مستقیم API تلگرام)
+# =========================================================
+
+def handle_start(message):
+    chat_id = message["chat"]["id"]
+
+    text = (
+        "👋 سلام\n\n"
+        "به ربات نرخ‌بان خوش آمدید.\n\n"
+        "🤖 این ربات قیمت بازار را به صورت خودکار در کانال شما منتشر می‌کند.\n\n"
+        "🔒 این ربات فقط تنظیمات مربوط به خودش را ذخیره می‌کند "
+        "و به اطلاعات شخصی شما دسترسی ندارد.\n\n"
+        "از منوی زیر استفاده کنید."
     )
 
-    return InlineKeyboardMarkup(keyboard)
+    tg_call("sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": main_menu(),
+    })
 
 
-# =========================================================
-# ساخت Bot و مدیریت event loop پس‌زمینه
-# (چون python-telegram-bot جدید async هست ولی Flask/gunicorn sync هست)
-#
-# توجه: عمداً از Application (که JobQueue/persistence سنگین داره) استفاده
-# نشده، چون روی Python 3.14 باعث قفل شدن process_update می‌شد.
-# به‌جاش مستقیم از Bot استفاده می‌کنیم و آپدیت‌ها رو خودمون dispatch می‌کنیم.
-# =========================================================
+def handle_callback(callback_query):
 
-bot = Bot(token=BOT_TOKEN)
+    data = callback_query["data"]
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
 
-bot_loop = asyncio.new_event_loop()
-
-
-def _start_loop():
-    asyncio.set_event_loop(bot_loop)
-    bot_loop.run_forever()
-
-
-threading.Thread(target=_start_loop, daemon=True).start()
-
-
-def run_async(coro, timeout=30):
-    """اجرای یک تابع async روی event loop ربات، از داخل کد sync"""
-    future = asyncio.run_coroutine_threadsafe(coro, bot_loop)
-    return future.result(timeout=timeout)
-
-
-# =========================================================
-# Handlers (همون handlers.py)
-# =========================================================
-
-async def start(update: Update):
-
-    text = f"""
-👋 سلام
-
-به ربات نرخ‌بان خوش آمدید.
-
-🤖 این ربات قیمت بازار را به صورت خودکار در کانال شما منتشر می‌کند.
-
-🔒 این ربات فقط تنظیمات مربوط به خودش را ذخیره می‌کند و به اطلاعات شخصی شما دسترسی ندارد.
-
-از منوی زیر استفاده کنید.
-"""
-
-    await update.message.reply_text(text, reply_markup=main_menu())
-
-
-async def callback(update: Update):
-
-    query = update.callback_query
-    await query.answer()
-    data = query.data
+    tg_call("answerCallbackQuery", {"callback_query_id": callback_query["id"]})
 
     # ---------------- Home ----------------
     if data == "back_home":
-        await query.edit_message_text(text="🏠 منوی اصلی", reply_markup=main_menu())
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": "🏠 منوی اصلی", "reply_markup": main_menu(),
+        })
         return
 
     # ---------------- Settings ----------------
     if data == "settings":
-        await query.edit_message_text(text="⚙️ تنظیمات", reply_markup=settings_menu())
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": "⚙️ تنظیمات", "reply_markup": settings_menu(),
+        })
         return
 
     # ---------------- Interval Menu ----------------
     if data == "interval_menu":
-        await query.edit_message_text(
-            text="⏰ فاصله ارسال را انتخاب کنید.",
-            reply_markup=interval_menu()
-        )
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": "⏰ فاصله ارسال را انتخاب کنید.",
+            "reply_markup": interval_menu(),
+        })
         return
 
     # ---------------- Assets Menu ----------------
     if data == "assets_menu":
-        await query.edit_message_text(text="💰 دارایی‌های فعال", reply_markup=assets_menu())
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": "💰 دارایی‌های فعال", "reply_markup": assets_menu(),
+        })
         return
 
     # ---------------- Interval ----------------
@@ -397,10 +394,11 @@ async def callback(update: Update):
         set_setting("interval", minute)
         update_scheduler_interval(int(minute))
 
-        await query.edit_message_text(
-            text=f"✅ فاصله ارسال روی {minute} دقیقه تنظیم شد.",
-            reply_markup=settings_menu()
-        )
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": f"✅ فاصله ارسال روی {minute} دقیقه تنظیم شد.",
+            "reply_markup": settings_menu(),
+        })
         return
 
     # ---------------- Asset ----------------
@@ -410,60 +408,53 @@ async def callback(update: Update):
         status = not assets[asset]
         set_asset(asset, status)
 
-        await query.edit_message_reply_markup(reply_markup=assets_menu())
+        tg_call("editMessageReplyMarkup", {
+            "chat_id": chat_id, "message_id": message_id,
+            "reply_markup": assets_menu(),
+        })
         return
 
     # ---------------- Status ----------------
     if data == "status":
-        text = f"""
-📊 وضعیت ربات
-
-✅ فعال
-
-⏰ فاصله ارسال:
-{get_interval()} دقیقه
-
-📌 نسخه:
-1.0
-"""
-        await query.edit_message_text(text=text, reply_markup=main_menu())
+        text = (
+            "📊 وضعیت ربات\n\n"
+            "✅ فعال\n\n"
+            f"⏰ فاصله ارسال:\n{get_interval()} دقیقه\n\n"
+            "📌 نسخه:\n1.0"
+        )
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": text, "reply_markup": main_menu(),
+        })
         return
 
     # ---------------- About ----------------
     if data == "about":
-        await query.edit_message_text(
-            text="""
-🤖 نرخ‌بان
-
-نسخه 1.0
-
-ربات انتشار خودکار قیمت بازار
-
-Developed with ❤️ by Eleya
-""",
-            reply_markup=main_menu()
+        text = (
+            "🤖 نرخ‌بان\n\n"
+            "نسخه 1.0\n\n"
+            "ربات انتشار خودکار قیمت بازار\n\n"
+            "Developed with ❤️ by Eleya"
         )
+        tg_call("editMessageText", {
+            "chat_id": chat_id, "message_id": message_id,
+            "text": text, "reply_markup": main_menu(),
+        })
         return
 
 
-async def dispatch_update(update: Update):
-    """آپدیت دریافتی از وبهوک رو دستی به هندلر درست می‌فرسته."""
-    if update.message is not None and update.message.text:
-        if update.message.text.strip() == "/start":
-            await start(update)
+def dispatch_update(update):
+    """آپدیت دریافتی از وبهوک رو به هندلر درست می‌فرسته."""
+
+    message = update.get("message")
+    if message and message.get("text", "").strip() == "/start":
+        handle_start(message)
         return
 
-    if update.callback_query is not None:
-        await callback(update)
+    callback_query = update.get("callback_query")
+    if callback_query:
+        handle_callback(callback_query)
         return
-
-
-# =========================================================
-# ارسال پیام به کانال (async)
-# =========================================================
-
-async def send_price_to_channel_async(text):
-    await bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="HTML")
 
 
 # =========================================================
@@ -484,7 +475,11 @@ def send_price_job():
         text = format_message(data)
         print(text, flush=True)
 
-        run_async(send_price_to_channel_async(text))
+        tg_call("sendMessage", {
+            "chat_id": CHANNEL_ID,
+            "text": text,
+            "parse_mode": "HTML",
+        })
 
         set_setting(
             "last_update",
@@ -521,7 +516,7 @@ start_scheduler()
 
 
 # =========================================================
-# Flask App + Webhook (همون main.py ولی به‌جای polling، webhook)
+# Flask App + Webhook
 # =========================================================
 
 app = Flask(__name__)
@@ -530,11 +525,10 @@ app = Flask(__name__)
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json(force=True)
-        print(f"📩 Update دریافت شد: {str(data)[:200]}", flush=True)
+        update = request.get_json(force=True)
+        print(f"📩 Update دریافت شد: {str(update)[:200]}", flush=True)
 
-        update = Update.de_json(data, bot)
-        run_async(dispatch_update(update))
+        dispatch_update(update)
 
     except Exception as e:
         print(f"❌ Webhook error: {e}", flush=True)
@@ -549,7 +543,8 @@ def index():
 
 
 # ست کردن وبهوک هنگام بالا آمدن اپ
-run_async(bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"))
+tg_call("deleteWebhook")
+tg_call("setWebhook", {"url": f"{WEBHOOK_URL}/{BOT_TOKEN}"})
 print(f"✅ Webhook set to {WEBHOOK_URL}/{BOT_TOKEN}", flush=True)
 
 
