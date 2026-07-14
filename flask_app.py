@@ -542,6 +542,16 @@ def index():
     return "NerkhBan bot is running!", 200
 
 
+@app.route(f"/{BOT_TOKEN}/send-now")
+def send_now():
+    """برای تست دستی: بدون منتظر موندن، همین الان قیمت رو به کانال بفرست."""
+    try:
+        send_price_job()
+        return "✅ send_price_job اجرا شد، لاگ‌ها رو در Render چک کن.", 200
+    except Exception as e:
+        return f"❌ خطا: {e}", 500
+
+
 # ست کردن وبهوک هنگام بالا آمدن اپ
 tg_call("deleteWebhook")
 tg_call("setWebhook", {"url": f"{WEBHOOK_URL}/{BOT_TOKEN}"})
